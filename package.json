@@ -1,0 +1,16 @@
+{
+  "name": "slide-discreet-craft-presentation-maker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A presentation maker that generates slide visuals, speaker scripts, and downloadable PPTX files.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pptxgenjs": "^3.12.0"
+  }
+}
