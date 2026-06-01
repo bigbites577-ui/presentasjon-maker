@@ -207,6 +207,12 @@ function svgDataUri(svg) {
   return "data:image/svg+xml;base64," + Buffer.from(svg).toString("base64");
 }
 
+function outputLanguage(input) {
+  const combined = `${input.topic || ""} ${input.criteria || ""}`.toLowerCase();
+  const norwegianHits = (combined.match(/\b(og|om|lag|lage|presentasjon|filmen|historien|foredragsnotater|kriterier|skal|ikke|med|norsk)\b/g) || []).length;
+  return norwegianHits >= 2 ? "no" : "en";
+}
+
 function sentenceList(text) {
   return cleanText(text)
     .split(/(?<=[.!?])\s+/)
@@ -215,13 +221,11 @@ function sentenceList(text) {
     .slice(0, 12);
 }
 
-async function researchTopic(rawTopic) {
+async function researchTopic(rawTopic, language = "no") {
   const candidates = researchCandidates(rawTopic);
-  const builtIn = builtInResearch(candidates);
+  const builtIn = builtInResearch(candidates, language);
   if (builtIn.found) return builtIn;
-  const webResearch = await researchWeb(candidates[0], candidates);
-  if (webResearch.found) return webResearch;
-  const languages = ["en", "no", "nb"];
+  const languages = language === "no" ? ["no", "nb", "en"] : ["en", "no", "nb"];
   for (const candidate of candidates) {
     for (const lang of languages) {
       try {
@@ -254,6 +258,8 @@ async function researchTopic(rawTopic) {
       }
     }
   }
+  const webResearch = await researchWeb(candidates[0], candidates, language);
+  if (webResearch.found) return webResearch;
   return { found: false, title: normalizeTopic(rawTopic), description: "", extract: "", facts: [], url: "" };
 }
 
@@ -364,8 +370,8 @@ function importantSentences(pages, topic) {
     .slice(0, 10);
 }
 
-async function researchWeb(topic, candidates) {
-  const query = candidates[0] || topic;
+async function researchWeb(topic, candidates, language = "no") {
+  const query = language === "no" ? `${candidates[0] || topic} norsk fakta` : (candidates[0] || topic);
   const instant = await fetchText(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`, 6000);
   const instantFacts = [];
   const sources = [];
@@ -397,7 +403,7 @@ async function researchWeb(topic, candidates) {
   return {
     found: true,
     title: titleCase(topic),
-    description: "Nettsøk basert på de viktigste treffene",
+    description: language === "no" ? "Nettsøk basert på de viktigste treffene" : "Web research based on top results",
     extract: facts.join(" "),
     facts,
     sources: sources.filter((source, index, all) => source.url && all.findIndex(item => item.url === source.url) === index).slice(0, 4),
@@ -405,16 +411,19 @@ async function researchWeb(topic, candidates) {
   };
 }
 
-function builtInResearch(candidates) {
+function builtInResearch(candidates, language = "no") {
   const joined = candidates.join(" ").toLowerCase();
   if (/lego batman/.test(joined)) {
+    const norwegian = language === "no";
     return {
       found: true,
-      title: "The Lego Batman Movie",
-      description: "Animert superheltkomedie fra 2017",
-      extract: "The Lego Batman Movie er en animert superheltkomedie fra 2017. Filmen er en spin-off fra The Lego Movie og bruker Batman-figuren fra DC Comics i en humoristisk Lego-verden.",
-      facts: [
-        "The Lego Batman Movie er en animert superheltkomedie fra 2017.",
+      title: norwegian ? "Lego Batman-filmen" : "The Lego Batman Movie",
+      description: norwegian ? "Animert superheltkomedie fra 2017" : "2017 animated superhero comedy film",
+      extract: norwegian
+        ? "Lego Batman-filmen er en animert superheltkomedie fra 2017. Filmen er en spin-off fra The Lego Movie og bruker Batman-figuren fra DC Comics i en humoristisk Lego-verden."
+        : "The Lego Batman Movie is a 2017 animated superhero comedy film and a spin-off from The Lego Movie.",
+      facts: norwegian ? [
+        "Lego Batman-filmen er en animert superheltkomedie fra 2017.",
         "Filmen er en spin-off fra The Lego Movie og handler om Lego-versjonen av Batman.",
         "Will Arnett gir stemmen til Batman i den engelske originalversjonen.",
         "Historien handler mye om at Batman må lære å samarbeide med andre, selv om han helst vil jobbe alene.",
@@ -422,6 +431,15 @@ function builtInResearch(candidates) {
         "Filmen blander action, komedie og parodi på mange kjente Batman-filmer og superhelthistorier.",
         "Regissøren er Chris McKay, og filmen ble laget av Warner Animation Group.",
         "Et hovedtema i filmen er familie, vennskap og det å tørre å slippe andre mennesker inn.",
+      ] : [
+        "The Lego Batman Movie is a 2017 animated superhero comedy film.",
+        "The film is a spin-off from The Lego Movie and follows the Lego version of Batman.",
+        "Will Arnett voices Batman in the original English version.",
+        "The story focuses on Batman learning to work with others instead of always working alone.",
+        "Important characters include Batman, Robin, Batgirl, Alfred and the Joker.",
+        "The film mixes action, comedy and parody of famous Batman and superhero stories.",
+        "Chris McKay directed the film, which was produced by Warner Animation Group.",
+        "A main theme is family, friendship and letting other people into your life.",
       ],
       url: "https://en.wikipedia.org/wiki/The_Lego_Batman_Movie",
     };
@@ -440,12 +458,13 @@ function fallbackPoints(criteria) {
 }
 
 async function buildSlides(input) {
+  const language = outputLanguage(input);
   const topic = titleCase(input.topic);
   const criteria = splitSentences(input.criteria);
   const count = Math.max(5, Math.min(12, Number(input.slideCount || 7)));
   const emoji = input.emoji === true;
   const iconSet = emoji ? ["✨ ", "🎯 ", "🧭 ", "⚡ ", "📌 ", "🚀 "] : ["", "", "", "", "", ""];
-  const research = await researchTopic(input.topic);
+  const research = await researchTopic(input.topic, language);
   const base = research.found ? research.facts : fallbackPoints(criteria);
   const slides = [
     {
@@ -454,7 +473,7 @@ async function buildSlides(input) {
       bullets: research.found
         ? [`${iconSet[0]}${research.description || "Kort introduksjon"}`, `${iconSet[1]}Basert på fakta fra Wikipedia`]
         : [`${iconSet[0]}Hva presentasjonen handler om`, `${iconSet[1]}Hva publikum bør sitte igjen med`],
-      notes: openingNote(research.found ? research.title : topic, input.notesLevel, research),
+      notes: openingNote(research.found ? research.title : topic, input.notesLevel, research, language),
     },
   ];
   for (let i = 1; i < count - 1; i++) {
@@ -463,8 +482,8 @@ async function buildSlides(input) {
     slides.push({
       title: `${iconSet[i % iconSet.length]}${shortTitle}`,
       kicker: `Del ${i}`,
-      bullets: makeFactBullets(seed, research, topic),
-      notes: noteFor(seed, input.notesLevel, research.found ? research.title : topic, research),
+      bullets: makeFactBullets(seed, research, topic, language),
+      notes: noteFor(seed, input.notesLevel, research.found ? research.title : topic, research, language),
     });
   }
   slides.push({
@@ -473,7 +492,7 @@ async function buildSlides(input) {
     bullets: research.found
       ? ["Oppsummer de viktigste faktaene", "Forklar hvorfor temaet er verdt å huske", research.url ? "Kilde: Wikipedia" : "Spørsmål og diskusjon"]
       : ["Hovedbudskapet i en setning", "Hva publikum bør gjøre videre", "Spørsmål og diskusjon"],
-    notes: closingNote(research.found ? research.title : topic, input.notesLevel, research),
+    notes: closingNote(research.found ? research.title : topic, input.notesLevel, research, language),
   });
   return slides;
 }
@@ -484,20 +503,26 @@ function makeSlideTitle(seed, index) {
   return words || `Del ${index}`;
 }
 
-function makeFactBullets(seed, research, topic) {
+function makeFactBullets(seed, research, topic, language = "no") {
   if (!research.found) {
-    return [
-      cleanText(seed),
-      `Knytt punktet direkte til ${topic.toLowerCase()}`,
-      "Bruk et tydelig eksempel",
-    ];
+    return language === "no"
+      ? [
+        cleanText(seed),
+        `Knytt punktet direkte til ${topic.toLowerCase()}`,
+        "Bruk et tydelig eksempel",
+      ]
+      : [
+        cleanText(seed),
+        `Connect this point directly to ${topic.toLowerCase()}`,
+        "Use a clear example",
+      ];
   }
   const related = research.facts.find(fact => fact !== seed && fact.length < 180) || research.description || research.title;
   const source = sourceHost(research, seed);
   return [
     cleanText(seed).replace(/\.$/, ""),
     cleanText(related).replace(/\.$/, ""),
-    source ? `Kilde: ${source}` : "Faktabasert punkt",
+    source ? `${language === "no" ? "Kilde" : "Source"}: ${source}` : (language === "no" ? "Faktabasert punkt" : "Fact-based point"),
   ];
 }
 
@@ -511,7 +536,12 @@ function sourceHost(research) {
   }
 }
 
-function openingNote(topic, level, research = {}) {
+function openingNote(topic, level, research = {}, language = "no") {
+  if (language !== "no") {
+    const fact = research.found ? (research.facts[0] || research.extract) : "";
+    if (research.found) return `Say this: Today I am going to talk about ${topic}. I will start with the most important background: ${fact} Then I will go through the key facts and finish with a short summary.`;
+    return `Say this: Today I am going to talk about ${topic}. I will explain what the topic is about, why it matters, and what the audience should remember.`;
+  }
   if (research.found) {
     const fact = research.facts[0] || research.extract;
     if (level === "short") {
@@ -531,8 +561,12 @@ function openingNote(topic, level, research = {}) {
   return `Si dette: Hei, i dag skal jeg snakke om ${topic}. Jeg starter med å forklare hva temaet handler om, så går jeg gjennom de viktigste poengene, og til slutt oppsummerer jeg hva dere bør huske.`;
 }
 
-function noteFor(seed, level, topic, research = {}) {
+function noteFor(seed, level, topic, research = {}, language = "no") {
   const fact = cleanText(seed).replace(/\.$/, "");
+  if (language !== "no") {
+    if (research.found) return `Say this: This slide explains an important fact: ${fact}. I included it because it gives concrete information about ${topic}, not just a general opinion.`;
+    return `Say this: This slide is about ${fact}. Explain the point clearly and connect it back to ${topic}.`;
+  }
   if (research.found) {
     if (level === "short") {
       return `Si dette: Her er et viktig faktapunkt: ${fact}. Dette hjelper oss å forstå ${topic} bedre.`;
@@ -560,7 +594,13 @@ function noteFor(seed, level, topic, research = {}) {
   return `Si dette: Dette lysbildet handler om ${seed}. Grunnen til at jeg tar det med, er at det forklarer en viktig del av ${topic}. Hvis vi ser på et praktisk eksempel, blir det lettere å forstå hvordan dette påvirker situasjonen. Det dere bør huske, er at dette punktet ikke står alene, men henger sammen med resten av presentasjonen.`;
 }
 
-function closingNote(topic, level, research = {}) {
+function closingNote(topic, level, research = {}, language = "no") {
+  if (language !== "no") {
+    const sourceList = research.sources?.length
+      ? ` The sources used were: ${research.sources.map(item => item.url).join(", ")}`
+      : (research.url ? ` The main source was: ${research.url}` : "");
+    return `Say this: To summarize, I have presented the most important facts about ${topic}. The main point is that we now understand what the topic is about and why it matters.${sourceList}`;
+  }
   if (research.found) {
     const source = research.url ? ` Kilden jeg brukte som utgangspunkt er Wikipedia: ${research.url}` : "";
     const sourceList = research.sources?.length
@@ -612,34 +652,71 @@ async function makePptx(input) {
   pptx.defineLayout({ name: "CUSTOM_WIDE", width: 13.333, height: 7.5 });
   pptx.layout = "CUSTOM_WIDE";
 
-  const { colors } = styleProfile(input.style);
-  const [bg, ink, accent, second, third] = colors;
   const slides = await buildSlides(input);
-  const visual = input.selectedImage || generateImages(input)[0].dataUri;
+  const navy = "153A6B";
+  const ink = "111111";
+  const muted = "6B7280";
+  const border = "767676";
+  const footerTopic = titleCase(input.topic);
 
   slides.forEach((item, index) => {
     const slide = pptx.addSlide();
-    slide.background = { color: bg.replace("#", "") };
-    if (index === 0) {
-      slide.addImage({ data: visual, x: 0, y: 0, w: 13.333, h: 7.5 });
-      slide.addShape(pptx.ShapeType.rect, { x: 0.55, y: 0.7, w: 6.65, h: 4.55, rectRadius: 0.14, fill: { color: bg.replace("#", ""), transparency: 10 }, line: { color: bg.replace("#", ""), transparency: 100 } });
-      slide.addText(item.kicker, { x: 0.9, y: 1.02, w: 5.9, h: 0.35, fontSize: 15, bold: true, color: accent.replace("#", ""), margin: 0 });
-      slide.addText(item.title, { x: 0.88, y: 1.55, w: 5.95, h: 1.35, fontSize: 36, bold: true, color: ink.replace("#", ""), fit: "shrink", margin: 0 });
-      slide.addText(item.bullets.join("\n"), { x: 0.92, y: 3.25, w: 5.35, h: 1.1, fontSize: 18, breakLine: false, color: ink.replace("#", ""), fit: "shrink", bullet: { type: "ul" } });
-    } else {
-      slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.333, h: 0.18, fill: { color: accent.replace("#", "") }, line: { transparency: 100 } });
-      slide.addText(item.kicker, { x: 0.72, y: 0.58, w: 2.4, h: 0.3, fontSize: 12, bold: true, color: accent.replace("#", ""), margin: 0 });
-      slide.addText(item.title, { x: 0.72, y: 1.02, w: 7.1, h: 0.92, fontSize: 28, bold: true, color: ink.replace("#", ""), fit: "shrink", margin: 0 });
-      slide.addShape(pptx.ShapeType.roundRect, { x: 8.35, y: 0.78, w: 3.9, h: 5.9, rectRadius: 0.08, fill: { color: second.replace("#", ""), transparency: 84 }, line: { color: second.replace("#", ""), transparency: 55 } });
-      slide.addShape(pptx.ShapeType.arc, { x: 9.05, y: 1.2, w: 2.3, h: 2.3, line: { color: third.replace("#", ""), width: 3, transparency: 15 } });
-      slide.addShape(pptx.ShapeType.ellipse, { x: 10.05, y: 4.15, w: 1.45, h: 1.45, fill: { color: accent.replace("#", ""), transparency: 7 }, line: { transparency: 100 } });
-      item.bullets.forEach((bullet, bulletIndex) => {
-        const y = 2.38 + bulletIndex * 0.86;
-        slide.addShape(pptx.ShapeType.ellipse, { x: 0.82, y: y + 0.08, w: 0.16, h: 0.16, fill: { color: accent.replace("#", "") }, line: { transparency: 100 } });
-        slide.addText(bullet, { x: 1.16, y, w: 6.55, h: 0.44, fontSize: 17, color: ink.replace("#", ""), fit: "shrink", margin: 0 });
+    slide.background = { color: "FFFFFF" };
+    const cleanTitle = String(item.title || "").replace(/^[\d.]+\s*/, "").trim();
+    slide.addText(`${index + 1}. ${cleanTitle}`, {
+      x: 0.62,
+      y: 0.48,
+      w: 11.4,
+      h: 0.55,
+      fontFace: "Aptos Display",
+      fontSize: 26,
+      bold: true,
+      color: navy,
+      fit: "shrink",
+      margin: 0,
+    });
+
+    const useBox = index !== 1;
+    if (useBox) {
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0.55,
+        y: 1.52,
+        w: 12.25,
+        h: 5.55,
+        fill: { color: "FFFFFF", transparency: 100 },
+        line: { color: border, width: 1.1 },
       });
-      slide.addText(String(index + 1).padStart(2, "0"), { x: 11.85, y: 6.78, w: 0.65, h: 0.24, fontSize: 10, color: ink.replace("#", ""), transparency: 35, align: "right", margin: 0 });
     }
+
+    const bullets = item.bullets
+      .map(bullet => cleanText(bullet).replace(/\.$/, ""))
+      .filter(Boolean)
+      .slice(0, 4);
+    const bulletText = bullets.map(bullet => `•   ${bullet}`).join("\n");
+    slide.addText(bulletText, {
+      x: 0.72,
+      y: useBox ? 3.2 : 3.25,
+      w: 11.35,
+      h: 2.55,
+      fontFace: "Aptos",
+      fontSize: 18,
+      color: ink,
+      breakLine: false,
+      fit: "shrink",
+      margin: 0,
+      paraSpaceAfterPt: 12,
+    });
+
+    slide.addText(`${footerTopic} | Presentation maker`, {
+      x: 0,
+      y: 7.18,
+      w: 13.333,
+      h: 0.18,
+      fontSize: 7,
+      color: muted,
+      align: "center",
+      margin: 0,
+    });
     addSpeakerNotes(slide, item.notes);
   });
   return pptx.write({ outputType: "nodebuffer" });
