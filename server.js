@@ -111,6 +111,31 @@ function cleanText(value) {
   return text;
 }
 
+function norwegianizeText(value) {
+  let text = cleanText(value);
+  const replacements = [
+    [/\bThe Lego Batman Movie\b/g, "Lego Batman-filmen"],
+    [/\bThe Lego Movie\b/g, "Lego-filmen"],
+    [/\bDC Comics\b/g, "DC Comics"],
+    [/\bWarner Animation Group\b/g, "Warner Animation Group"],
+    [/\bspin-off\b/gi, "avlegger"],
+    [/\boriginal English version\b/gi, "engelske originalversjonen"],
+    [/\banimated superhero comedy film\b/gi, "animert superheltkomedie"],
+    [/\bthe film\b/gi, "filmen"],
+    [/\bthe story\b/gi, "historien"],
+    [/\bimportant characters include\b/gi, "viktige figurer er"],
+    [/\ba main theme is\b/gi, "et hovedtema er"],
+  ];
+  replacements.forEach(([pattern, replacement]) => {
+    text = text.replace(pattern, replacement);
+  });
+  return text;
+}
+
+function localizeText(value, language = "no") {
+  return language === "no" ? norwegianizeText(value) : cleanText(value);
+}
+
 function normalizeTopic(value) {
   let text = cleanText(value);
   text = text.replace(/^(kan du\s+)?(vær så snill\s+)?(lag|lage|lager|lagg|make|create)\s+(en\s+)?(kort\s+|lang\s+|bra\s+)?presentasjon\s+(som\s+handler\s+)?om\s+/i, "");
@@ -245,11 +270,11 @@ async function researchTopic(rawTopic, language = "no") {
       if (facts.length) {
         return {
           found: true,
-          title: cleanText(summary.title || title),
-          description: cleanText(summary.description || ""),
+          title: localizeText(summary.title || title, language),
+          description: localizeText(summary.description || "", language),
           extract,
-          facts,
-          sources: [{ title: cleanText(summary.title || title), url: summary.content_urls?.desktop?.page || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}` }],
+          facts: facts.map(fact => localizeText(fact, language)),
+          sources: [{ title: localizeText(summary.title || title, language), url: summary.content_urls?.desktop?.page || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}` }],
           url: summary.content_urls?.desktop?.page || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`,
         };
       }
@@ -405,7 +430,7 @@ async function researchWeb(topic, candidates, language = "no") {
     title: titleCase(topic),
     description: language === "no" ? "Nettsøk basert på de viktigste treffene" : "Web research based on top results",
     extract: facts.join(" "),
-    facts,
+    facts: facts.map(fact => localizeText(fact, language)),
     sources: sources.filter((source, index, all) => source.url && all.findIndex(item => item.url === source.url) === index).slice(0, 4),
     url: bestSource.url || "",
   };
@@ -424,12 +449,12 @@ function builtInResearch(candidates, language = "no") {
         : "The Lego Batman Movie is a 2017 animated superhero comedy film and a spin-off from The Lego Movie.",
       facts: norwegian ? [
         "Lego Batman-filmen er en animert superheltkomedie fra 2017.",
-        "Filmen er en spin-off fra The Lego Movie og handler om Lego-versjonen av Batman.",
+        "Filmen er en avlegger fra Lego-filmen og handler om Lego-versjonen av Batman.",
         "Will Arnett gir stemmen til Batman i den engelske originalversjonen.",
         "Historien handler mye om at Batman må lære å samarbeide med andre, selv om han helst vil jobbe alene.",
         "Viktige figurer i filmen er Batman, Robin, Batgirl, Alfred og Joker.",
         "Filmen blander action, komedie og parodi på mange kjente Batman-filmer og superhelthistorier.",
-        "Regissøren er Chris McKay, og filmen ble laget av Warner Animation Group.",
+        "Filmen er regissert av Chris McKay og produsert av Warner Animation Group.",
         "Et hovedtema i filmen er familie, vennskap og det å tørre å slippe andre mennesker inn.",
       ] : [
         "The Lego Batman Movie is a 2017 animated superhero comedy film.",
@@ -466,14 +491,15 @@ async function buildSlides(input) {
   const iconSet = emoji ? ["✨ ", "🎯 ", "🧭 ", "⚡ ", "📌 ", "🚀 "] : ["", "", "", "", "", ""];
   const research = await researchTopic(input.topic, language);
   const base = research.found ? research.facts : fallbackPoints(criteria);
+  const deckTitle = localizeText(research.found ? research.title : topic, language);
   const slides = [
     {
-      title: research.found ? research.title : topic,
+      title: deckTitle,
       kicker: research.found ? "Faktabasert start" : "Presentation maker",
       bullets: research.found
         ? [`${iconSet[0]}${research.description || "Kort introduksjon"}`, `${iconSet[1]}Basert på fakta fra Wikipedia`]
         : [`${iconSet[0]}Hva presentasjonen handler om`, `${iconSet[1]}Hva publikum bør sitte igjen med`],
-      notes: openingNote(research.found ? research.title : topic, input.notesLevel, research, language),
+      notes: openingNote(deckTitle, input.notesLevel, research, language),
     },
   ];
   for (let i = 1; i < count - 1; i++) {
@@ -483,7 +509,7 @@ async function buildSlides(input) {
       title: `${iconSet[i % iconSet.length]}${shortTitle}`,
       kicker: `Del ${i}`,
       bullets: makeFactBullets(seed, research, topic, language),
-      notes: noteFor(seed, input.notesLevel, research.found ? research.title : topic, research, language),
+      notes: noteFor(seed, input.notesLevel, deckTitle, research, language),
     });
   }
   slides.push({
@@ -492,7 +518,7 @@ async function buildSlides(input) {
     bullets: research.found
       ? ["Oppsummer de viktigste faktaene", "Forklar hvorfor temaet er verdt å huske", research.url ? "Kilde: Wikipedia" : "Spørsmål og diskusjon"]
       : ["Hovedbudskapet i en setning", "Hva publikum bør gjøre videre", "Spørsmål og diskusjon"],
-    notes: closingNote(research.found ? research.title : topic, input.notesLevel, research, language),
+    notes: closingNote(deckTitle, input.notesLevel, research, language),
   });
   return slides;
 }
@@ -520,8 +546,8 @@ function makeFactBullets(seed, research, topic, language = "no") {
   const related = research.facts.find(fact => fact !== seed && fact.length < 180) || research.description || research.title;
   const source = sourceHost(research, seed);
   return [
-    cleanText(seed).replace(/\.$/, ""),
-    cleanText(related).replace(/\.$/, ""),
+    localizeText(seed, language).replace(/\.$/, ""),
+    localizeText(related, language).replace(/\.$/, ""),
     source ? `${language === "no" ? "Kilde" : "Source"}: ${source}` : (language === "no" ? "Faktabasert punkt" : "Fact-based point"),
   ];
 }
@@ -538,12 +564,12 @@ function sourceHost(research) {
 
 function openingNote(topic, level, research = {}, language = "no") {
   if (language !== "no") {
-    const fact = research.found ? (research.facts[0] || research.extract) : "";
+  const fact = research.found ? (research.facts[0] || research.extract) : "";
     if (research.found) return `Say this: Today I am going to talk about ${topic}. I will start with the most important background: ${fact} Then I will go through the key facts and finish with a short summary.`;
     return `Say this: Today I am going to talk about ${topic}. I will explain what the topic is about, why it matters, and what the audience should remember.`;
   }
   if (research.found) {
-    const fact = research.facts[0] || research.extract;
+    const fact = localizeText(research.facts[0] || research.extract, language);
     if (level === "short") {
       return `Si dette: Hei, i dag skal jeg snakke om ${topic}. Kort sagt: ${fact}`;
     }
@@ -562,7 +588,7 @@ function openingNote(topic, level, research = {}, language = "no") {
 }
 
 function noteFor(seed, level, topic, research = {}, language = "no") {
-  const fact = cleanText(seed).replace(/\.$/, "");
+  const fact = localizeText(seed, language).replace(/\.$/, "");
   if (language !== "no") {
     if (research.found) return `Say this: This slide explains an important fact: ${fact}. I included it because it gives concrete information about ${topic}, not just a general opinion.`;
     return `Say this: This slide is about ${fact}. Explain the point clearly and connect it back to ${topic}.`;
